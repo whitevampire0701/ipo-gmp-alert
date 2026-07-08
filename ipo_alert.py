@@ -19,39 +19,35 @@ def clean(x):
     return " ".join(x.replace("\n", " ").split()).strip()
 
 def main():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    html = requests.get(URL, headers=headers, timeout=20).text
+    html = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=20).text
     soup = BeautifulSoup(html, "html.parser")
-
-    text = soup.get_text("\n", strip=True)
 
     today = datetime.now().strftime("%d %b %Y")
     msg = f"📊 <b>Daily IPO GMP Update - {today}</b>\n\n"
 
-    keywords = [
-        "Laser Power & Infra",
-        "Kusumgar",
-        "IC Electricals",
-        "Knack Packaging",
-        "Devson Catalyst",
-        "Happy Steels",
-        "Shree Balaji Mala",
-        "Millworks Technologies",
-        "SBI Funds Management",
-    ]
-
+    rows = soup.find_all("tr")
     found = 0
-    for name in keywords:
-        if name.lower() in text.lower():
+
+    for row in rows:
+        cols = [clean(c.get_text(" ", strip=True)) for c in row.find_all(["td", "th"])]
+        if len(cols) < 4:
+            continue
+
+        row_text = " | ".join(cols)
+        if "gmp" in row_text.lower() or any(char.isdigit() for char in row_text):
             found += 1
-            msg += f"{found}. <b>{name}</b>\n"
-            msg += "Status: Found in live GMP tracker\n\n"
+            msg += f"<b>{found}. {cols[0]}</b>\n"
+            for item in cols[1:7]:
+                msg += f"• {item}\n"
+            msg += "\n"
+
+        if found >= 12:
+            break
 
     if found == 0:
-        msg += "No IPO GMP data found from current source today.\n"
+        msg += "No detailed IPO GMP rows found today.\n"
 
     msg += "⚠️ GMP is unofficial and changes frequently."
-
     send_telegram(msg)
 
 if __name__ == "__main__":
