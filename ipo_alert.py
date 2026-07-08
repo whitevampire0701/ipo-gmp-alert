@@ -8,8 +8,7 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
 URLS = [
-    "https://www.investorgain.com/report/live-ipo-gmp/331/",
-    "https://www.investorgain.com/report/ipo-gmp/331/",
+    "https://www.investorgain.com/report/ipo-gmp-live/331/",
 ]
 
 def send_telegram(message):
