@@ -16,38 +16,91 @@ def send_telegram(message):
     )
 
 def clean(x):
-    return " ".join(x.replace("\n", " ").split()).strip()
+    return " ".join(str(x).replace("\n", " ").split()).strip()
+
+def calc_gain(price, gmp):
+    try:
+        price = float(str(price).replace("₹", "").replace(",", "").strip())
+        gmp = float(str(gmp).replace("₹", "").replace(",", "").strip())
+        if price <= 0:
+            return "-"
+        return f"{(gmp / price) * 100:.2f}%"
+    except:
+        return "-"
 
 def main():
     html = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=20).text
     soup = BeautifulSoup(html, "html.parser")
 
-    today = datetime.now().strftime("%d %b %Y")
-    msg = f"📊 <b>Daily IPO GMP Update - {today}</b>\n\n"
-
     rows = soup.find_all("tr")
-    found = 0
+    today = datetime.now().strftime("%d %b %Y")
+
+    mainboard = []
+    sme = []
 
     for row in rows:
         cols = [clean(c.get_text(" ", strip=True)) for c in row.find_all(["td", "th"])]
-        if len(cols) < 4:
+
+        if len(cols) < 7:
             continue
 
-        row_text = " | ".join(cols)
-        if "gmp" in row_text.lower() or any(char.isdigit() for char in row_text):
-            found += 1
-            msg += f"<b>{found}. {cols[0]}</b>\n"
-            for item in cols[1:7]:
-                msg += f"• {item}\n"
-            msg += "\n"
+        name, price, gmp, size, open_date, close_date, listing = cols[:7]
 
-        if found >= 12:
-            break
+        if name.lower() in ["ipo name", ""]:
+            continue
 
-    if found == 0:
-        msg += "No detailed IPO GMP rows found today.\n"
+        gain = calc_gain(price, gmp)
 
-    msg += "⚠️ GMP is unofficial and changes frequently."
+        item = {
+            "name": name.replace("Apply Now", "").strip(),
+            "price": price,
+            "gmp": gmp,
+            "gain": gain,
+            "size": size,
+            "open": open_date,
+            "close": close_date,
+            "listing": listing
+        }
+
+        if "sme" in name.lower():
+            sme.append(item)
+        else:
+            mainboard.append(item)
+
+    msg = f"📈 <b>IPO GMP Morning Report</b>\n"
+    msg += f"📅 <b>{today}</b>\n\n"
+
+    if mainboard:
+        msg += "🟢 <b>Mainboard IPOs</b>\n\n"
+        for ipo in mainboard[:8]:
+            msg += f"🏢 <b>{ipo['name']}</b>\n"
+            msg += f"💰 Price: ₹{ipo['price']}\n"
+            msg += f"🔥 GMP: ₹{ipo['gmp']}\n"
+            msg += f"📈 Est. Gain: {ipo['gain']}\n"
+            msg += f"📦 Issue Size: ₹{ipo['size']}\n"
+            msg += f"📅 Open: {ipo['open']}\n"
+            msg += f"⏰ Close: {ipo['close']}\n"
+            msg += f"🚀 Listing: {ipo['listing']}\n"
+            msg += "━━━━━━━━━━━━━━━\n"
+
+    if sme:
+        msg += "\n🟡 <b>SME IPOs</b>\n\n"
+        for ipo in sme[:8]:
+            msg += f"🏢 <b>{ipo['name']}</b>\n"
+            msg += f"💰 Price: ₹{ipo['price']}\n"
+            msg += f"🔥 GMP: ₹{ipo['gmp']}\n"
+            msg += f"📈 Est. Gain: {ipo['gain']}\n"
+            msg += f"📦 Issue Size: ₹{ipo['size']}\n"
+            msg += f"📅 Open: {ipo['open']}\n"
+            msg += f"⏰ Close: {ipo['close']}\n"
+            msg += f"🚀 Listing: {ipo['listing']}\n"
+            msg += "━━━━━━━━━━━━━━━\n"
+
+    if not mainboard and not sme:
+        msg += "No IPO GMP data found today.\n"
+
+    msg += "\n⚠️ GMP is unofficial and changes frequently."
+
     send_telegram(msg)
 
 if __name__ == "__main__":
