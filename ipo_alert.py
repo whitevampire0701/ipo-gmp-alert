@@ -85,12 +85,13 @@ def estimate_lot_size(price_text, ipo_name):
 
 def parse_date(date_text):
     try:
-        current_year = datetime.now(ZoneInfo("Asia/Kolkata")).year
         cleaned = clean(date_text).replace(",", "")
+        current_year = datetime.now(ZoneInfo("Asia/Kolkata")).year
 
-        for fmt in ["%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y"]:
+        for fmt in ["%b %d", "%B %d", "%d %b", "%d %B"]:
             try:
-                return datetime.strptime(f"{cleaned} {current_year}", fmt)
+                parsed = datetime.strptime(cleaned, fmt)
+                return parsed.replace(year=current_year)
             except ValueError:
                 continue
 
