@@ -1,20 +1,28 @@
-name: Daily IPO GMP Alert
+name: Daily Telegram Alert
 
 on:
-  schedule:
-    - cron: "30 3 * * *"
   workflow_dispatch:
+  schedule:
+    - cron: "33 3 * * *"   # 9:03 AM IST, avoids exact high-load minute
 
 jobs:
   send-alert:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python ipo_alert.py
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python ipo_alert.py
