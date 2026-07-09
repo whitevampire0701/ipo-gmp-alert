@@ -24,9 +24,7 @@ def money(value):
 
 
 def fetch_page(url, retries=3):
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     for attempt in range(retries):
         try:
@@ -49,8 +47,8 @@ def extract_number(text):
 
 
 def extract_price_high(price_text):
-    nums = re.findall(r"\d+(\.\d+)?", price_text.replace(",", ""))
-    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", price_text.replace(",", ""))]
+    nums = re.findall(r"\d+(?:\.\d+)?", price_text.replace(",", ""))
+    nums = [float(x) for x in nums]
     return max(nums) if nums else None
 
 
@@ -64,8 +62,56 @@ def calculate_gmp_percent(price, gmp):
     return None
 
 
+def estimate_lot_size(price_text, ipo_name):
+    price_num = extract_price_high(price_text)
+
+    if not price_num:
+        return None
+
+    if "SME" in ipo_name.upper():
+        target_amount = 120000
+    else:
+        target_amount = 15000
+
+    lot = int(target_amount // price_num)
+
+    if lot >= 1000:
+        lot = round(lot / 100) * 100
+    elif lot >= 100:
+        lot = round(lot / 10) * 10
+
+    return max(lot, 1)
+
+
+def parse_date(date_text):
+    try:
+        current_year = datetime.now(ZoneInfo("Asia/Kolkata")).year
+        cleaned = clean(date_text).replace(",", "")
+
+        for fmt in ["%b %d %Y", "%B %d %Y", "%d %b %Y", "%d %B %Y"]:
+            try:
+                return datetime.strptime(f"{cleaned} {current_year}", fmt)
+            except ValueError:
+                continue
+
+        return None
+    except Exception:
+        return None
+
+
+def is_not_closed(close_date_text):
+    close_date = parse_date(close_date_text)
+
+    if not close_date:
+        return True
+
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    return close_date.date() >= today
+
+
 def parse_ipopremium():
     html = fetch_page(URL)
+
     if not html:
         return []
 
@@ -74,6 +120,7 @@ def parse_ipopremium():
 
     for table in soup.find_all("table"):
         rows = table.find_all("tr")
+
         if len(rows) < 2:
             continue
 
@@ -107,14 +154,22 @@ def parse_ipopremium():
             if not name or name.lower() in ["company name", "rumors"]:
                 continue
 
-            gmp_percent = calculate_gmp_percent(price, gmp)
+            if not is_not_closed(close_date):
+                continue
 
-            lot_num = extract_number(lot_size)
             price_num = extract_price_high(price)
+            lot_num = extract_number(lot_size)
+
+            if not lot_num:
+                lot_num = estimate_lot_size(price, name)
+                lot_size = f"{lot_num} shares" if lot_num else "Data unavailable"
 
             min_investment = "Data unavailable"
+
             if lot_num and price_num:
                 min_investment = money(lot_num * price_num)
+
+            gmp_percent = calculate_gmp_percent(price, gmp)
 
             if gmp_percent is None:
                 gmp_display = gmp
@@ -163,8 +218,8 @@ def build_message():
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
 
     if not ipos:
-        msg += "\nNo live IPO data available right now.\n"
-        msg += "Bot is working, but IPO source did not return usable data.\n"
+        msg += "\nNo live IPOs available right now.\n"
+        msg += "Bot is working, but no active IPO data was found.\n"
         return msg
 
     for i, ipo in enumerate(ipos, 1):
@@ -179,7 +234,9 @@ def build_message():
         msg += f"⭐ View: {ipo['view']}\n"
         msg += "\n━━━━━━━━━━━━━━━━━━━━━━\n"
 
+    msg += "\n⚠️ Lot size/min investment may be estimated."
     msg += "\n⚠️ GMP is unofficial and not investment advice."
+
     return msg
 
 
