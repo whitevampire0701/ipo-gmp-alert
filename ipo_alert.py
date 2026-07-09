@@ -6,21 +6,19 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from dateutil import parser
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-URL = "https://www.ipopremium.in/"
+IPO_SOURCE = "https://www.ipopremium.in/"
+IST = ZoneInfo("Asia/Kolkata")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def clean(text):
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def money(value):
-    return f"₹{int(value):,}"
+    return re.sub(r"\s+", " ", text or "").strip()
 
 
 def fetch_page(url, retries=3):
@@ -39,17 +37,37 @@ def fetch_page(url, retries=3):
 
 
 def extract_number(text):
-    if not text:
-        return None
-
-    match = re.search(r"-?\d+(\.\d+)?", text.replace(",", ""))
+    match = re.search(r"-?\d+(\.\d+)?", str(text).replace(",", ""))
     return float(match.group()) if match else None
 
 
 def extract_price_high(price_text):
-    nums = re.findall(r"\d+(?:\.\d+)?", price_text.replace(",", ""))
-    nums = [float(x) for x in nums]
+    nums = re.findall(r"\d+(?:\.\d+)?", str(price_text).replace(",", ""))
+    nums = [float(n) for n in nums]
     return max(nums) if nums else None
+
+
+def parse_close_date(date_text):
+    try:
+        current_year = datetime.now(IST).year
+        text = clean(date_text).replace(",", "")
+
+        # Handles: Jul 7, Jul 7 2026, 7 Jul, 7 Jul 2026
+        parsed = parser.parse(text, fuzzy=True, default=datetime(current_year, 1, 1))
+        return parsed.date()
+    except Exception:
+        return None
+
+
+def is_not_closed(close_date_text):
+    close_date = parse_close_date(close_date_text)
+
+    if close_date is None:
+        logging.warning(f"Could not parse close date: {close_date_text}")
+        return True
+
+    today = datetime.now(IST).date()
+    return close_date >= today
 
 
 def calculate_gmp_percent(price, gmp):
@@ -83,35 +101,26 @@ def estimate_lot_size(price_text, ipo_name):
     return max(lot, 1)
 
 
-def parse_date(date_text):
-    try:
-        cleaned = clean(date_text).replace(",", "")
-        current_year = datetime.now(ZoneInfo("Asia/Kolkata")).year
-
-        for fmt in ["%b %d", "%B %d", "%d %b", "%d %B"]:
-            try:
-                parsed = datetime.strptime(cleaned, fmt)
-                return parsed.replace(year=current_year)
-            except ValueError:
-                continue
-
-        return None
-    except Exception:
-        return None
+def money(value):
+    return f"₹{int(value):,}"
 
 
-def is_not_closed(close_date_text):
-    close_date = parse_date(close_date_text)
+def get_view(gmp_percent):
+    if gmp_percent is None:
+        return "Data unavailable", "WAIT"
 
-    if not close_date:
-        return True
+    if gmp_percent >= 25:
+        return "High", "APPLY"
+    elif gmp_percent >= 10:
+        return "Moderate", "MAY APPLY"
+    elif gmp_percent > 0:
+        return "Low", "AVOID / WAIT"
+    else:
+        return "Flat / Negative", "AVOID"
 
-    today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-    return close_date.date() >= today
 
-
-def parse_ipopremium():
-    html = fetch_page(URL)
+def parse_ipos():
+    html = fetch_page(IPO_SOURCE)
 
     if not html:
         return []
@@ -128,13 +137,7 @@ def parse_ipopremium():
         headers = [clean(h.get_text(" ")) for h in rows[0].find_all(["th", "td"])]
         headers_lower = [h.lower() for h in headers]
 
-        if not any("company" in h for h in headers_lower):
-            continue
-        if not any("gmp" in h for h in headers_lower):
-            continue
-        if not any("close" in h for h in headers_lower):
-            continue
-        if not any("price" in h for h in headers_lower):
+        if not all(any(key in h for h in headers_lower) for key in ["company", "gmp", "open", "close", "price"]):
             continue
 
         for row in rows[1:]:
@@ -146,16 +149,17 @@ def parse_ipopremium():
             data = dict(zip(headers_lower, cols))
 
             name = next((data[h] for h in data if "company" in h), "")
-            gmp = next((data[h] for h in data if "gmp" in h), "Data unavailable")
             open_date = next((data[h] for h in data if "open" in h), "Data unavailable")
             close_date = next((data[h] for h in data if "close" in h), "Data unavailable")
             price = next((data[h] for h in data if "price" in h), "Data unavailable")
+            gmp = next((data[h] for h in data if "gmp" in h), "Data unavailable")
             lot_size = next((data[h] for h in data if "lot" in h), "Data unavailable")
 
-            if not name or name.lower() in ["company name", "rumors"]:
+            if not name or "company" in name.lower():
                 continue
 
             if not is_not_closed(close_date):
+                logging.info(f"Skipping closed IPO: {name} | Closed: {close_date}")
                 continue
 
             price_num = extract_price_high(price)
@@ -166,31 +170,15 @@ def parse_ipopremium():
                 lot_size = f"{lot_num} shares" if lot_num else "Data unavailable"
 
             min_investment = "Data unavailable"
-
-            if lot_num and price_num:
-                min_investment = money(lot_num * price_num)
+            if price_num and lot_num:
+                min_investment = money(price_num * lot_num)
 
             gmp_percent = calculate_gmp_percent(price, gmp)
+            expected_gain, view = get_view(gmp_percent)
 
-            if gmp_percent is None:
-                gmp_display = gmp
-                expected_gain = "Data unavailable"
-                view = "WAIT"
-            else:
+            gmp_display = gmp
+            if gmp_percent is not None:
                 gmp_display = f"{gmp} ({gmp_percent}%)"
-
-                if gmp_percent >= 25:
-                    expected_gain = "High"
-                    view = "APPLY"
-                elif gmp_percent >= 10:
-                    expected_gain = "Moderate"
-                    view = "MAY APPLY"
-                elif gmp_percent > 0:
-                    expected_gain = "Low"
-                    view = "AVOID / WAIT"
-                else:
-                    expected_gain = "Flat / Negative"
-                    view = "AVOID"
 
             ipos.append({
                 "name": name,
@@ -202,25 +190,28 @@ def parse_ipopremium():
                 "gmp": gmp_display,
                 "expected_gain": expected_gain,
                 "view": view,
+                "close_date_obj": parse_close_date(close_date),
             })
+
+    ipos.sort(key=lambda x: x["close_date_obj"] or datetime.max.date())
 
     return ipos[:10]
 
 
 def build_message():
-    now = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d %b %Y, %I:%M %p")
-    ipos = parse_ipopremium()
+    now = datetime.now(IST).strftime("%d %b %Y, %I:%M %p")
+    ipos = parse_ipos()
 
     msg = "📊 <b>PERSONAL INVESTMENT ASSISTANT</b>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
     msg += f"📅 {now}\n"
     msg += "🟢 Status: Bot running successfully\n\n"
-    msg += f"🔥 <b>LIVE IPOs ({len(ipos)})</b>\n"
+    msg += f"🔥 <b>ACTIVE / UPCOMING IPOs ({len(ipos)})</b>\n"
     msg += "━━━━━━━━━━━━━━━━━━━━━━\n"
 
     if not ipos:
-        msg += "\nNo live IPOs available right now.\n"
-        msg += "Bot is working, but no active IPO data was found.\n"
+        msg += "\nNo active IPOs available right now.\n"
+        msg += "Bot is working, but no active IPO data was found."
         return msg
 
     for i, ipo in enumerate(ipos, 1):
@@ -261,7 +252,8 @@ def send_telegram_message(message):
 
 
 def main():
-    send_telegram_message(build_message())
+    message = build_message()
+    send_telegram_message(message)
 
 
 if __name__ == "__main__":
