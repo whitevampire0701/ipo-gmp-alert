@@ -2,18 +2,21 @@ name: Daily Telegram Alert
 
 on:
   workflow_dispatch:
+
   schedule:
-    - cron: "33 3 * * *"   # 9:03 AM IST, avoids exact high-load minute
+    - cron: "7 9 * * *"
+      timezone: "Asia/Kolkata"
 
 jobs:
   send-alert:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -21,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run Telegram alert
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
